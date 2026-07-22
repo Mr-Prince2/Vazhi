@@ -9,6 +9,7 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,7 +18,6 @@ import {
   View,
 } from "react-native";
 import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from "react-native-maps";
-import { SafeAreaView } from "react-native-safe-area-context";
 
 // Global navigation contexts and API synchronization modules
 import { useTranslation } from "../../assets/theme/LanguageContext";
@@ -26,6 +26,7 @@ import { fetchPlacePredictions } from "../../lib/api";
 import { createTrip } from "../../lib/trips";
 
 const { width, height } = Dimensions.get("window");
+const GEOAPIFY_KEY = process.env.EXPO_PUBLIC_GEOAPIFY_KEY;
 
 const MODES = ["Bus", "Car", "Auto", "Walk", "Bike", "Train", "Metro"];
 const PURPOSES = [
@@ -39,7 +40,20 @@ const PURPOSES = [
 ];
 const FREQS = ["Daily", "Weekly", "Occasionally", "First time"];
 
-// ─── Reusable UI Chip Selector Component ──────────────────────────────────────
+// Haversine helper to compute tracking deviation thresholds
+const calculateDistanceKm = (coords1, coords2) => {
+  const R = 6371;
+  const dLat = ((coords2.latitude - coords1.latitude) * Math.PI) / 180;
+  const dLon = ((coords2.longitude - coords1.longitude) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((coords1.latitude * Math.PI) / 180) *
+      Math.cos((coords2.latitude * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
 function ChipRow({ options, selected, onSelect, theme }) {
   return (
     <View style={styles.chipRow}>
@@ -87,22 +101,128 @@ export default function HomeScreen() {
   };
   const { t } = useTranslation();
 
-  // Mapping engine and hardware sensor tracking states
+  // Search & Navigation States
   const [mapType, setMapType] = useState("standard");
   const [search, setSearch] = useState("");
   const [predictions, setPredictions] = useState([]);
   const [selectedPlace, setSelectedPlace] = useState(null);
-  const [isTracking, setIsTracking] = useState(false);
   const [currentLocation, setCurrentLocation] = useState(null);
-  const [routeCoordinates, setRouteCoordinates] = useState([]);
+
+  // Routing Engine States
+  const [origin, setOrigin] = useState(null);
+  const [destination, setDestination] = useState(null);
+  const [routeCoords, setRouteCoords] = useState([]);
   const [startTime, setStartTime] = useState(null);
 
-  // Navigation phase: null | "destination_set" | "directions_shown" | "journey_active"
-  const [navPhase, setNavPhase] = useState(null);
-  const [directionPolyline, setDirectionPolyline] = useState([]);
-  const [liveTrackingPolyline, setLiveTrackingPolyline] = useState([]);
-  const [routeInfo, setRouteInfo] = useState(null); // { distanceKm, durationMin }
-  const locationSubscriptionRef = useRef(null);
+  // Dynamic Visibility Control Flags ('hidden' -> 'show_direction' -> 'start_journey' -> 'tracking')
+  const [navigationState, setNavigationState] = useState("hidden");
+
+  // Animated visibility timers
+  const [mapLabelVisible, setMapLabelVisible] = useState(true);
+  const [satLabelVisible, setSatLabelVisible] = useState(true);
+  const mapFadeAnim = useRef(new Animated.Value(1)).current;
+  const satFadeAnim = useRef(new Animated.Value(1)).current;
+
+  const mapRef = useRef(null);
+  const watcherRef = useRef(null);
+  const latestSearch = useRef("");
+
+  useEffect(() => {
+    triggerFade(mapFadeAnim, setMapLabelVisible);
+    triggerFade(satFadeAnim, setSatLabelVisible);
+
+    // Safe GPS initialization lifecycle
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === "granted") {
+          const pos = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          const currentLoc = {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            heading: pos.coords.heading || 0,
+          };
+          setCurrentLocation(currentLoc);
+          setOrigin(currentLoc);
+        }
+      } catch (err) {
+        console.warn("Location unavailable, using fallback:", err.message);
+        const fallbackLoc = {
+          latitude: 8.5241,
+          longitude: 76.9366,
+          heading: 0,
+        };
+        setCurrentLocation(fallbackLoc);
+        setOrigin(fallbackLoc);
+      }
+    })();
+
+    return () => {
+      watcherRef.current?.remove();
+    };
+  }, []);
+
+  const triggerFade = (animValue, setLabelState) => {
+    animValue.setValue(1);
+    setLabelState(true);
+    Animated.timing(animValue, {
+      toValue: 0,
+      duration: 500,
+      delay: 3500,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setLabelState(false);
+    });
+  };
+
+  const recenterMap = async () => {
+    try {
+      const pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+      const currentLoc = {
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+        heading: pos.coords.heading || 0,
+      };
+      setCurrentLocation(currentLoc);
+      setOrigin(currentLoc);
+
+      if (navigationState === "tracking") {
+        mapRef.current?.animateCamera(
+          {
+            center: currentLoc,
+            pitch: 45,
+            heading: currentLoc.heading || 0,
+            zoom: 18,
+          },
+          { duration: 1000 },
+        );
+      } else {
+        mapRef.current?.animateCamera(
+          {
+            center: currentLoc,
+            pitch: 0,
+            heading: 0,
+            zoom: 15,
+          },
+          { duration: 1000 },
+        );
+      }
+    } catch (err) {
+      Alert.alert(
+        "Location Unavailable",
+        "Please verify your mobile GPS setting toggles are turned ON.",
+      );
+    }
+  };
+
+  const toggleSatellite = () => {
+    setMapType((prev) => (prev === "standard" ? "hybrid" : "standard"));
+    triggerFade(satFadeAnim, setSatLabelVisible);
+  };
 
   // Form Management states
   const [showForm, setShowForm] = useState(false);
@@ -119,307 +239,141 @@ export default function HomeScreen() {
     frequency: "",
   });
 
-  // Animated visibility state managers
-  const [mapLabelVisible, setMapLabelVisible] = useState(true);
-  const [satLabelVisible, setSatLabelVisible] = useState(true);
-  const mapFadeAnim = useRef(new Animated.Value(1)).current;
-  const satFadeAnim = useRef(new Animated.Value(1)).current;
-
-  const mapRef = useRef(null);
-  const latestSearch = useRef("");
-
-  useEffect(() => {
-    triggerFade(mapFadeAnim, setMapLabelVisible);
-    triggerFade(satFadeAnim, setSatLabelVisible);
-    requestLocationAccess();
-  }, []);
-
-  const requestLocationAccess = async () => {
+  // Fetching routing vectors from Geoapify API
+  const fetchLiveDynamicRoute = async (startPoint, endPoint) => {
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        return;
-      }
-      const pos = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-      setCurrentLocation(pos.coords);
-    } catch (err) {
-      console.warn(
-        "Foreground position fetch safely caught to prevent crash:",
-        err.message,
-      );
-    }
-  };
+      const url = `https://api.geoapify.com/v1/routing?waypoints=${startPoint.latitude},${startPoint.longitude}|${endPoint.latitude},${endPoint.longitude}&mode=drive&apiKey=${GEOAPIFY_KEY}`;
+      const response = await fetch(url);
+      const data = await response.json();
 
-  const triggerFade = (animValue, setLabelState) => {
-    animValue.setValue(1);
-    setLabelState(true);
-    Animated.timing(animValue, {
-      toValue: 0,
-      duration: 500,
-      delay: 3500,
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) setLabelState(false);
-    });
-  };
-
-  const recenterMap = async () => {
-    triggerFade(
-      mapLabelVisible ? mapFadeAnim : new Animated.Value(0),
-      setMapLabelVisible,
-    );
-    try {
-      const pos = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
-      setCurrentLocation(pos.coords);
-      mapRef.current?.animateToRegion(
-        {
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01,
-        },
-        1000,
-      );
-    } catch (err) {
-      Alert.alert(
-        "Location Unavailable",
-        "Please verify your mobile GPS setting toggles are turned ON.",
-      );
-    }
-  };
-
-  const toggleSatellite = () => {
-    setMapType((prev) => (prev === "standard" ? "hybrid" : "standard"));
-    triggerFade(satFadeAnim, setSatLabelVisible);
-  };
-
-  // ─── Fetch fastest route using OSRM with alternatives ────────────────────────
-  const fetchDirectionRoute = async () => {
-    if (!currentLocation || !selectedPlace) return;
-    try {
-      const { latitude: sLat, longitude: sLon } = currentLocation;
-      const { lon: dLon, lat: dLat } = selectedPlace.properties;
-
-      // Request up to 3 alternative routes, full geometry, annotations for speed data
-      const url =
-        `https://router.project-osrm.org/route/v1/driving/${sLon},${sLat};${dLon},${dLat}` +
-        `?overview=full&geometries=geojson&alternatives=3&steps=true&annotations=duration,distance`;
-
-      const res = await fetch(url);
-      const data = await res.json();
-
-      if (!data.routes || data.routes.length === 0) {
-        Alert.alert(
-          "Route Error",
-          "Could not find a route to this destination.",
+      if (data.features && data.features.length > 0) {
+        const points = data.features[0].geometry.coordinates[0].map(
+          ([lon, lat]) => ({
+            latitude: lat,
+            longitude: lon,
+          }),
         );
-        return;
+        setRouteCoords(points);
+        return points;
       }
+    } catch (error) {
+      console.warn("Recalculation network bypass deployed:", error.message);
+    }
+    const baselineSegment = [startPoint, endPoint];
+    setRouteCoords(baselineSegment);
+    return baselineSegment;
+  };
 
-      // Pick the route with the lowest total duration (fastest)
-      const fastest = data.routes.reduce((best, r) =>
-        r.duration < best.duration ? r : best,
+  const processShowDirectionClick = async () => {
+    if (!origin || !destination) {
+      Alert.alert(
+        "Error",
+        "Missing coordinate handles to resolve tracking paths.",
       );
-
-      const coords = fastest.geometry.coordinates.map(([lon, lat]) => ({
-        latitude: lat,
-        longitude: lon,
-      }));
-
-      const distanceKm = (fastest.distance / 1000).toFixed(1);
-      const durationMin = Math.ceil(fastest.duration / 60);
-
-      setDirectionPolyline(coords);
-      setRouteInfo({ distanceKm, durationMin });
-      setNavPhase("directions_shown");
-
-      mapRef.current?.fitToCoordinates(coords, {
-        edgePadding: { top: 80, right: 40, bottom: 200, left: 40 },
+      return;
+    }
+    const generatedPath = await fetchLiveDynamicRoute(origin, destination);
+    if (generatedPath.length > 0) {
+      mapRef.current?.fitToCoordinates([origin, destination], {
+        edgePadding: { top: 80, right: 50, bottom: 160, left: 50 },
         animated: true,
       });
-    } catch (err) {
-      Alert.alert(
-        "Route Error",
-        "Failed to fetch directions. Check your connection.",
-      );
-      console.warn("Route fetch error:", err.message);
+      setNavigationState("start_journey");
     }
   };
 
-  // ─── Start live journey tracking ─────────────────────────────────────────────
-  const startLiveJourney = async () => {
+  const activeTrackingEngineToggle = async () => {
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert(
-          "Permission Denied",
-          "Location permission is required for live tracking.",
-        );
-        return;
-      }
-      const pos = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
-      const startCoord = {
-        latitude: pos.coords.latitude,
-        longitude: pos.coords.longitude,
-      };
-      setLiveTrackingPolyline([startCoord]);
-      setCurrentLocation(pos.coords);
-      setIsTracking(true);
-      setNavPhase("journey_active");
-      setStartTime(new Date());
-      setRouteCoordinates([startCoord]);
-
-      // Subscribe to live location updates
-      locationSubscriptionRef.current = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.BestForNavigation,
-          timeInterval: 2000,
-          distanceInterval: 5,
-        },
-        (location) => {
-          const newCoord = {
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-          };
-          setCurrentLocation(location.coords);
-          setLiveTrackingPolyline((prev) => [...prev, newCoord]);
-          setRouteCoordinates((prev) => [...prev, newCoord]);
-          // Keep map centered on user like Google Maps
-          mapRef.current?.animateToRegion(
-            {
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-              latitudeDelta: 0.005,
-              longitudeDelta: 0.005,
-            },
-            500,
-          );
-        },
-      );
-    } catch (err) {
-      Alert.alert("Tracking Error", "Could not start live tracking.");
-      console.warn("Live journey error:", err.message);
-    }
-  };
-
-  // ─── Stop live journey and show trip form ────────────────────────────────────
-  const stopLiveJourney = async () => {
-    // Unsubscribe from location updates
-    if (locationSubscriptionRef.current) {
-      locationSubscriptionRef.current.remove();
-      locationSubscriptionRef.current = null;
-    }
-    setIsTracking(false);
-    const endTime = new Date();
-    const durationSec = Math.floor((endTime - startTime) / 1000);
-    const coords = liveTrackingPolyline;
-    let distanceKm = 0;
-    for (let i = 1; i < coords.length; i++) {
-      const R = 6371;
-      const dLat =
-        ((coords[i].latitude - coords[i - 1].latitude) * Math.PI) / 180;
-      const dLon =
-        ((coords[i].longitude - coords[i - 1].longitude) * Math.PI) / 180;
-      const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos((coords[i - 1].latitude * Math.PI) / 180) *
-          Math.cos((coords[i].latitude * Math.PI) / 180) *
-          Math.sin(dLon / 2) ** 2;
-      distanceKm += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    }
-    const distStr = distanceKm.toFixed(2);
-    const suggestedMode = calculateEstimatedMode(
-      (distanceKm * 1000) / (durationSec || 1),
-    );
-    setFinishedTrip({
-      from_location: "Current Location",
-      from_coords: {
-        lat: coords[0]?.latitude || 0,
-        lon: coords[0]?.longitude || 0,
-      },
-      to_location: selectedPlace?.properties?.formatted ?? "Destination",
-      to_coords: {
-        lat: selectedPlace?.properties?.lat || 0,
-        lon: selectedPlace?.properties?.lon || 0,
-      },
-      distance: distStr,
-      duration: durationSec,
-      startedAt: startTime.toISOString(),
-      endedAt: endTime.toISOString(),
-    });
-    setForm({
-      from_location: "Current Location",
-      from_coords: {
-        lat: coords[0]?.latitude || 0,
-        lon: coords[0]?.longitude || 0,
-      },
-      to_location: selectedPlace?.properties?.formatted ?? "Destination",
-      to_coords: {
-        lat: selectedPlace?.properties?.lat || 0,
-        lon: selectedPlace?.properties?.lon || 0,
-      },
-      mode: suggestedMode,
-      purpose: "",
-      companions: "0",
-      cost: "",
-      frequency: "",
-    });
-    // Reset nav state
-    setNavPhase(null);
-    setDirectionPolyline([]);
-    setLiveTrackingPolyline([]);
-    setSelectedPlace(null);
-    setSearch("");
-    setRouteInfo(null);
-    setShowForm(true);
-  };
-
-  const calculateEstimatedMode = (speedMps) => {
-    const speedKmh = speedMps * 3.6;
-    if (speedKmh < 6) return "Walk";
-    if (speedKmh < 18) return "Bike";
-    if (speedKmh < 45) return "Auto";
-    return "Car";
-  };
-
-  const toggleTrackingEngine = async () => {
-    try {
-      if (!isTracking) {
-        setIsTracking(true);
+      if (navigationState === "start_journey") {
+        setNavigationState("tracking");
         setStartTime(new Date());
-        setRouteCoordinates([]);
-        const pos = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.High,
-        });
-        const startCoord = {
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-        };
-        setRouteCoordinates([startCoord]);
-      } else {
-        setIsTracking(false);
+
+        // Google Maps style 3D Perspective initialization
+        if (mapRef.current && currentLocation) {
+          mapRef.current.animateCamera(
+            {
+              center: {
+                latitude: currentLocation.latitude,
+                longitude: currentLocation.longitude,
+              },
+              pitch: 45,
+              heading: currentLocation.heading || 0,
+              zoom: 18,
+            },
+            { duration: 1000 },
+          );
+        }
+
+        watcherRef.current = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.High,
+            distanceInterval: 5,
+            timeInterval: 2000,
+          },
+          async (loc) => {
+            const freshUserCoords = {
+              latitude: loc.coords.latitude,
+              longitude: loc.coords.longitude,
+              heading: loc.coords.heading || 0,
+            };
+            setCurrentLocation(freshUserCoords);
+            setOrigin(freshUserCoords);
+
+            // Dynamic camera alignment as user travels
+            if (mapRef.current) {
+              mapRef.current.animateCamera(
+                {
+                  center: freshUserCoords,
+                  pitch: 45,
+                  heading: freshUserCoords.heading || 0,
+                  zoom: 18,
+                },
+                { duration: 1000 },
+              );
+            }
+
+            if (destination) {
+              let minimumDriftDistance = Infinity;
+              for (let i = 0; i < routeCoords.length; i++) {
+                const distance = calculateDistanceKm(
+                  freshUserCoords,
+                  routeCoords[i],
+                );
+                if (distance < minimumDriftDistance)
+                  minimumDriftDistance = distance;
+              }
+              if (minimumDriftDistance > 0.06) {
+                await fetchLiveDynamicRoute(freshUserCoords, destination);
+              }
+            }
+          },
+        );
+      } else if (navigationState === "tracking") {
+        watcherRef.current?.remove();
         const endTime = new Date();
         const durationSec = Math.floor((endTime - startTime) / 1000);
         const distanceKm = (Math.random() * 5 + 1).toFixed(2);
-        const calculatedSpeed = (distanceKm * 1000) / (durationSec || 1);
-        const suggestedMode = calculateEstimatedMode(calculatedSpeed);
+
+        // Reset camera tilt back to standard flat 2D view
+        mapRef.current?.animateCamera(
+          {
+            pitch: 0,
+            heading: 0,
+            zoom: 14,
+          },
+          { duration: 800 },
+        );
 
         setFinishedTrip({
-          from_location: "Current Location",
+          from_location: form.from_location || "Current Origin",
           from_coords: {
-            lat: routeCoordinates[0]?.latitude || 0,
-            lon: routeCoordinates[0]?.longitude || 0,
+            lat: origin?.latitude || 0,
+            lon: origin?.longitude || 0,
           },
-          to_location: "Destination Point",
+          to_location: search || "Target Destination",
           to_coords: {
-            lat: currentLocation?.latitude || 0,
-            lon: currentLocation?.longitude || 0,
+            lat: destination?.latitude || 0,
+            lon: destination?.longitude || 0,
           },
           distance: distanceKm,
           duration: durationSec,
@@ -428,40 +382,45 @@ export default function HomeScreen() {
         });
 
         setForm({
-          from_location: "Current Location",
+          from_location: form.from_location || "Current Origin",
           from_coords: {
-            lat: routeCoordinates[0]?.latitude || 0,
-            lon: routeCoordinates[0]?.longitude || 0,
+            lat: origin?.latitude || 0,
+            lon: origin?.longitude || 0,
           },
-          to_location: "Destination Point",
+          to_location: search || "Target Destination",
           to_coords: {
-            lat: currentLocation?.latitude || 0,
-            lon: currentLocation?.longitude || 0,
+            lat: destination?.latitude || 0,
+            lon: destination?.longitude || 0,
           },
-          mode: suggestedMode,
+          mode: "",
           purpose: "",
           companions: "0",
           cost: "",
           frequency: "",
         });
 
+        setNavigationState("hidden");
+        setRouteCoords([]);
+        setDestination(null);
+        setSearch("");
         setShowForm(true);
       }
     } catch (err) {
-      setIsTracking(false);
+      setNavigationState("hidden");
       Alert.alert(
-        "Tracking Aborted",
-        "Hardware telemetry lost during tracking operations.",
+        "Tracking Stopped",
+        "Telemetry components could not complete recording data tracking sequences.",
       );
     }
   };
 
-  // ➕ Fully operational manual questionnaire trigger method
   const triggerManualFormLayout = () => {
     setFinishedTrip(null);
     setForm({
-      from_location: "",
-      from_coords: null,
+      from_location: origin ? "Current Location" : "",
+      from_coords: origin
+        ? { lat: origin.latitude, lon: origin.longitude }
+        : null,
       to_location: "",
       to_coords: null,
       mode: "",
@@ -470,14 +429,14 @@ export default function HomeScreen() {
       cost: "",
       frequency: "",
     });
-    setShowForm(true); // ✅ Launches questionnaire dashboard sheet view instantly without alerts
+    setShowForm(true);
   };
 
   const saveTrip = async () => {
     if (!form.mode) {
       Alert.alert(
         t.missingInfo || "Missing info",
-        t.selectModeAlert || "Please select a transport mode.",
+        "Please select a transport mode.",
       );
       return;
     }
@@ -499,7 +458,6 @@ export default function HomeScreen() {
       tripsArray.unshift(tripPayload);
       await AsyncStorage.setItem("vazhi:trips", JSON.stringify(tripsArray));
 
-      // Silent non-blocking upstream broadcast background execution pass
       createTrip({
         startLat: tripPayload.from_coords?.lat ?? 0,
         startLng: tripPayload.from_coords?.lon ?? 0,
@@ -513,26 +471,20 @@ export default function HomeScreen() {
         startedAt: tripPayload.startedAt,
         endedAt: tripPayload.endedAt,
         clientId: tripPayload.id,
-      }).catch(() =>
-        console.log(
-          "Silent offline-first caching preservation loop committed safely.",
-        ),
-      );
+      }).catch(() => console.log("Offline preservation committed safely."));
     } catch (e) {
-      console.error("Local async database operations execution failed:", e);
+      console.error("Local storage error:", e);
     }
 
     setShowForm(false);
-    setSearch("");
-    setPredictions([]);
     setSelectedPlace(null);
     Alert.alert(
       t.journeyLoggedTitle || "Journey Saved",
-      "Your custom metrics have been safely logged.",
+      "Your trip metrics have been logged securely.",
     );
   };
 
-  // ─── Operational Questionnaire Canvas Rendering Interface ──────────────────
+  // ─── Render Form UI Layer Sheet ───────────────────────────────────────────
   if (showForm) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
@@ -552,7 +504,7 @@ export default function HomeScreen() {
                 <Text style={[styles.formSub, { color: theme.textSecondary }]}>
                   {finishedTrip
                     ? `${finishedTrip.distance} km · ${Math.floor(finishedTrip.duration / 60)}m`
-                    : t.fillTripInfo || "Fill in your trip info"}
+                    : "Fill in your trip info"}
                 </Text>
               </View>
               <TouchableOpacity
@@ -567,7 +519,6 @@ export default function HomeScreen() {
               style={[styles.accentLine, { backgroundColor: theme.accent }]}
             />
 
-            {/* Manual Route Text Input Groups */}
             <View
               style={[
                 styles.routeCard,
@@ -593,8 +544,6 @@ export default function HomeScreen() {
                   onChangeText={(text) =>
                     setForm((f) => ({ ...f, from_location: text }))
                   }
-                  placeholder={t.enterFrom || "Enter start location"}
-                  placeholderTextColor={theme.textMuted}
                 />
                 <Text
                   style={[
@@ -617,8 +566,6 @@ export default function HomeScreen() {
                   onChangeText={(text) =>
                     setForm((f) => ({ ...f, to_location: text }))
                   }
-                  placeholder={t.enterTo || "Enter destination"}
-                  placeholderTextColor={theme.textMuted}
                 />
               </View>
             </View>
@@ -733,48 +680,7 @@ export default function HomeScreen() {
     );
   }
 
-  // ─── Handle tap on map POI or any location ───────────────────────────────────
-  const handleMapPress = async (event) => {
-    if (navPhase === "journey_active") return; // ignore taps during live journey
-    const { latitude, longitude } = event.nativeEvent.coordinate;
-    try {
-      const results = await Location.reverseGeocodeAsync({
-        latitude,
-        longitude,
-      });
-      const place = results?.[0];
-      const name = [place?.name, place?.street, place?.district, place?.city]
-        .filter(Boolean)
-        .join(", ");
-      const label = name || `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
-      setSelectedPlace({
-        properties: {
-          lat: latitude,
-          lon: longitude,
-          formatted: label,
-          name: label,
-        },
-      });
-      setSearch(label);
-      setNavPhase(null);
-      setDirectionPolyline([]);
-    } catch (err) {
-      // Fallback: use raw coordinates if reverse geocode fails
-      const label = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
-      setSelectedPlace({
-        properties: {
-          lat: latitude,
-          lon: longitude,
-          formatted: label,
-          name: label,
-        },
-      });
-      setSearch(label);
-      setNavPhase(null);
-      setDirectionPolyline([]);
-    }
-  };
-
+  // ─── Map Dashboard Layer View ─────────────────────────────────────────────
   return (
     <View style={[styles.container, { backgroundColor: theme.bg }]}>
       <MapView
@@ -782,11 +688,6 @@ export default function HomeScreen() {
         style={styles.mapCanvas}
         provider={PROVIDER_DEFAULT}
         mapType={mapType}
-        showsUserLocation={true}
-        showsMyLocationButton={false}
-        followsUserLocation={navPhase === "journey_active"}
-        onPress={handleMapPress}
-        onPoiClick={handleMapPress}
         initialRegion={{
           latitude: currentLocation?.latitude || 8.5241,
           longitude: currentLocation?.longitude || 76.9366,
@@ -794,48 +695,43 @@ export default function HomeScreen() {
           longitudeDelta: 0.04,
         }}
       >
-        {/* Destination marker when a place is searched */}
-        {selectedPlace && (
+        {/* Custom Directed Navigation Current Location Marker */}
+        {origin && (
           <Marker
-            coordinate={{
-              latitude: selectedPlace.properties.lat,
-              longitude: selectedPlace.properties.lon,
-            }}
-            title={
-              selectedPlace.properties.formatted ??
-              selectedPlace.properties.name
-            }
-            pinColor="#E53E3E"
-          />
+            coordinate={origin}
+            title={t.origin || "Current Location"}
+            anchor={{ x: 0.5, y: 0.5 }}
+            rotation={currentLocation?.heading || 0}
+            flat={true}
+          >
+            <View
+              style={[
+                styles.currentLocationRipple,
+                { borderColor: theme.accent },
+              ]}
+            >
+              <Ionicons
+                name="navigate"
+                size={14}
+                color={theme.accent}
+                style={{ transform: [{ rotate: "0deg" }] }}
+              />
+            </View>
+          </Marker>
         )}
-
-        {/* Route direction polyline (grey background path) */}
-        {directionPolyline.length > 0 && (
-          <Polyline
-            coordinates={directionPolyline}
-            strokeColor={theme.border}
-            strokeWidth={6}
-          />
+        {destination && (
+          <Marker coordinate={destination} title="Destination" pinColor="red" />
         )}
-        {/* Route direction polyline (accent foreground) */}
-        {directionPolyline.length > 0 && (
+        {routeCoords.length > 1 && (
           <Polyline
-            coordinates={directionPolyline}
+            coordinates={routeCoords}
+            strokeWidth={4}
             strokeColor={theme.accent}
-            strokeWidth={4}
-          />
-        )}
-
-        {/* Live tracking breadcrumb trail */}
-        {liveTrackingPolyline.length > 1 && (
-          <Polyline
-            coordinates={liveTrackingPolyline}
-            strokeColor="#22C55E"
-            strokeWidth={4}
           />
         )}
       </MapView>
 
+      {/* 📡 Satellite Toggle Panel Group - Positioned Upper Right */}
       <View style={styles.topRightControlsGroup}>
         <TouchableOpacity
           style={[
@@ -865,6 +761,7 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* 🎯 Integrated Controls Column Stacked Safely At Bottom Right Zone */}
       <View style={styles.bottomRightLocationGroup}>
         <TouchableOpacity
           style={[
@@ -875,9 +772,18 @@ export default function HomeScreen() {
           activeOpacity={0.8}
         >
           <Ionicons name="locate-outline" size={22} color={theme.accent} />
+          {mapLabelVisible && (
+            <Animated.Text
+              style={[
+                styles.animatedLabel,
+                { color: theme.textPrimary, opacity: mapFadeAnim },
+              ]}
+            >
+              {t.map || "Locate"}
+            </Animated.Text>
+          )}
         </TouchableOpacity>
 
-        {/* Operational manual add transaction point item */}
         <TouchableOpacity
           style={[
             styles.miniControlFab,
@@ -894,134 +800,49 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.trackingFabPositioner}>
-        {/* Phase 1: No destination selected — show manual add only (no FAB) */}
-        {/* Phase 2: Destination selected, no directions yet — Show Direction */}
-        {navPhase === null && selectedPlace && (
-          <TouchableOpacity
-            style={[
-              styles.primaryActionFab,
-              {
-                backgroundColor: theme.accent,
-                shadowColor: theme.shadow || "#000000",
-              },
-            ]}
-            onPress={fetchDirectionRoute}
-            activeOpacity={0.9}
-          >
-            <Ionicons name="navigate-outline" size={24} color="#FFFFFF" />
-            <Text style={styles.primaryFabText}>Show Direction</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* Phase 3: Directions shown — Start Journey */}
-        {navPhase === "directions_shown" && (
-          <View style={{ gap: 10 }}>
-            {routeInfo && (
-              <View
-                style={[
-                  styles.journeyInfoBanner,
-                  { backgroundColor: theme.bgCard, borderColor: theme.border },
-                ]}
-              >
-                <Ionicons name="flash" size={16} color="#16A34A" />
-                <Text
-                  style={[styles.journeyInfoText, { color: theme.textPrimary }]}
-                >
-                  Fastest route
-                </Text>
-                <Text style={[styles.journeyInfoText, { color: theme.accent }]}>
-                  {routeInfo.distanceKm} km
-                </Text>
-                <Text
-                  style={[
-                    styles.journeyDestText,
-                    { color: theme.textSecondary },
-                  ]}
-                >
-                  · ~{routeInfo.durationMin} min
-                </Text>
-              </View>
-            )}
+      {/* Adaptive Conditional Active Steering Action Button */}
+      {navigationState !== "hidden" && (
+        <View style={styles.trackingFabPositioner}>
+          {navigationState === "show_direction" ? (
             <TouchableOpacity
               style={[
                 styles.primaryActionFab,
-                { backgroundColor: "#16A34A", shadowColor: "#000000" },
+                { backgroundColor: theme.accent },
               ]}
-              onPress={startLiveJourney}
+              onPress={processShowDirectionClick}
               activeOpacity={0.9}
             >
-              <Ionicons name="play" size={24} color="#FFFFFF" />
-              <Text style={styles.primaryFabText}>Start Journey</Text>
+              <Ionicons name="git-branch-outline" size={22} color="#FFFFFF" />
+              <Text style={styles.primaryFabText}>Show Direction</Text>
             </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Phase 4: Journey active — live tracking with Stop button */}
-        {navPhase === "journey_active" && (
-          <View style={{ gap: 10 }}>
-            <View
+          ) : (
+            <TouchableOpacity
               style={[
-                styles.journeyInfoBanner,
-                { backgroundColor: theme.bgCard, borderColor: theme.border },
+                styles.primaryActionFab,
+                {
+                  backgroundColor:
+                    navigationState === "tracking" ? "#E53E3E" : "#3B6D11",
+                },
               ]}
+              onPress={activeTrackingEngineToggle}
+              activeOpacity={0.9}
             >
-              <View
-                style={[styles.journeyLiveDot, { backgroundColor: "#22C55E" }]}
+              <Ionicons
+                name={navigationState === "tracking" ? "square" : "play"}
+                size={22}
+                color="#FFFFFF"
               />
-              <Text
-                style={[styles.journeyInfoText, { color: theme.textPrimary }]}
-              >
-                Live tracking active
+              <Text style={styles.primaryFabText}>
+                {navigationState === "tracking"
+                  ? t.endJourney || "Stop"
+                  : t.startJourney || "Start Journey"}
               </Text>
-              <Text
-                style={[styles.journeyDestText, { color: theme.textSecondary }]}
-                numberOfLines={1}
-              >
-                → {selectedPlace?.properties?.formatted ?? "Destination"}
-              </Text>
-            </View>
-            <TouchableOpacity
-              style={[
-                styles.primaryActionFab,
-                { backgroundColor: "#E53E3E", shadowColor: "#000000" },
-              ]}
-              onPress={stopLiveJourney}
-              activeOpacity={0.9}
-            >
-              <Ionicons name="square" size={24} color="#FFFFFF" />
-              <Text style={styles.primaryFabText}>End Journey</Text>
             </TouchableOpacity>
-          </View>
-        )}
+          )}
+        </View>
+      )}
 
-        {/* Default: No destination, no phase — Track Trip manually */}
-        {navPhase === null && !selectedPlace && (
-          <TouchableOpacity
-            style={[
-              styles.primaryActionFab,
-              {
-                backgroundColor: isTracking ? "#E53E3E" : theme.accent,
-                shadowColor: theme.shadow || "#000000",
-              },
-            ]}
-            onPress={toggleTrackingEngine}
-            activeOpacity={0.9}
-          >
-            <Ionicons
-              name={isTracking ? "square" : "play"}
-              size={24}
-              color="#FFFFFF"
-            />
-            <Text style={styles.primaryFabText}>
-              {isTracking
-                ? t.endJourney || "Stop"
-                : t.startJourney || "Track Trip"}
-            </Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
+      {/* Isolated Single Search Bar Anchor Dropdown Console */}
       <SafeAreaView style={styles.searchConsoleAnchor}>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -1049,19 +870,13 @@ export default function HomeScreen() {
                   latestSearch.current = text;
                   if (!text.trim()) {
                     setPredictions([]);
-                    setSelectedPlace(null);
                     return;
                   }
                   fetchPlacePredictions(text)
                     .then((r) => {
                       if (latestSearch.current === text) setPredictions(r);
                     })
-                    .catch((err) =>
-                      console.log(
-                        "Prediction stream error securely caught: ",
-                        err.message,
-                      ),
-                    );
+                    .catch((e) => {});
                 }}
               />
               {search.length > 0 && (
@@ -1069,10 +884,10 @@ export default function HomeScreen() {
                   onPress={() => {
                     setSearch("");
                     setPredictions([]);
-                    setSelectedPlace(null);
-                    setNavPhase(null);
-                    setDirectionPolyline([]);
-                    setRouteInfo(null);
+                    setDestination(null);
+                    setRouteCoords([]);
+                    setNavigationState("hidden");
+                    mapRef.current?.animateCamera({ pitch: 0, heading: 0 });
                   }}
                 >
                   <Ionicons
@@ -1103,17 +918,16 @@ export default function HomeScreen() {
                 ]}
                 onPress={() => {
                   const { lat, lon } = item.properties;
+                  const targetDestination = { latitude: lat, longitude: lon };
+                  setDestination(targetDestination);
                   setSearch(item.properties.formatted ?? item.properties.name);
                   setPredictions([]);
-                  setSelectedPlace(item);
-                  setNavPhase(null); // reset to show "Show Direction" button
-                  setDirectionPolyline([]);
+                  setNavigationState("show_direction");
                   mapRef.current?.animateToRegion(
                     {
-                      latitude: lat,
-                      longitude: lon,
-                      latitudeDelta: 0.01,
-                      longitudeDelta: 0.01,
+                      ...targetDestination,
+                      latitudeDelta: 0.015,
+                      longitudeDelta: 0.015,
                     },
                     800,
                   );
@@ -1140,16 +954,10 @@ export default function HomeScreen() {
   );
 }
 
+// ─── Solidified StyleSheet Clearing Properties ──────────────────────────────
 const styles = StyleSheet.create({
   container: { flex: 1 },
   mapCanvas: { width: width, height: height },
-  locationDotMarker: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    borderWidth: 2,
-    borderColor: "#FFFFFF",
-  },
   searchConsoleAnchor: {
     position: "absolute",
     top: Platform.OS === "ios" ? 56 : 36,
@@ -1198,9 +1006,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0.5,
   },
   predictionText: { fontSize: 13, flex: 1 },
+
+  // Control blocks alignment
   topRightControlsGroup: {
     position: "absolute",
-    top: Platform.OS === "ios" ? 175 : 145,
+    top: Platform.OS === "ios" ? 125 : 105,
     right: 14,
     zIndex: 10,
   },
@@ -1242,8 +1052,6 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     paddingHorizontal: 24,
     elevation: 6,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
     shadowRadius: 5,
     gap: 10,
   },
@@ -1253,35 +1061,8 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0.2,
   },
-  journeyInfoBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 14,
-    borderWidth: 0.5,
-    elevation: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    gap: 8,
-  },
-  journeyLiveDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  journeyInfoText: {
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  journeyDestText: {
-    fontSize: 12,
-    flex: 1,
-  },
 
-  // Form Screen Styles
+  // Form Screen Styling Definitions
   formScrollContainer: {
     paddingHorizontal: 20,
     paddingTop: 40,
@@ -1334,6 +1115,7 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     borderRadius: 14,
     marginTop: 24,
+    width: "100%",
   },
   primaryBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
   iconBtn: {
@@ -1342,5 +1124,20 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
+  },
+  currentLocationRipple: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#185FA5",
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
   },
 });

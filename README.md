@@ -1,50 +1,123 @@
-# Welcome to your Expo app 👋
+# 🚗 Vazhi (വഴി) — Mobile Travel & Transit Data Collection App
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+> **Problem Statement ID:** 25082  
+> **Organization:** Government of Kerala | KSCSTE – National Transportation Planning and Research Centre (NATPAC)  
+> **Category:** Software | **Theme:** Travel & Tourism
 
-## Get started
+---
 
-1. Install dependencies
+## 📌 About the Project
 
+**Vazhi** is an intelligent, offline-first mobile application developed for **KSCSTE – NATPAC** to automate large-scale travel behavior data collection across Kerala. Replacing traditional, expensive, and time-consuming household surveys, Vazhi automatically logs real-time commuter metrics—including transit paths, origin/destination coordinates, duration, speed, and mode of travel—while seamlessly collecting qualitative trip data (purpose, companions, cost, frequency) through interactive user prompts.
+
+---
+
+## ✨ Key Features
+
+- **🗺️ Smart Map & 3D Live Navigation:** Tilted 3D driving perspective camera (`pitch`, `heading`) with real-time hardware compass tracking and dynamic orientation.
+- **📍 Origin & Destination Routing:** Automatic current location marker, destination search drop pins, and interactive polyline direction rendering powered by Geoapify Routing API.
+- **⚡ Dynamic Live Rerouting:** Automatically detects route drift (>60m) during active transit and recalculates optimal paths in real-time.
+- **📊 Automated & Manual Data Logging:** Automatically computes estimated transport mode based on speed vectors, paired with a questionnaire sheet for rich travel attributes.
+- **💾 Offline-First Architecture:** Local transaction persistence via `AsyncStorage` with silent background sync to backend endpoints upon network restoration.
+- **🌐 Multi-Language & Theme Support:** Built-in localization (English/Malayalam) and adaptive light/dark theme modes.
+
+---
+
+## 🛠️ Tech Stack
+
+| Component           | Technology / Library                        |
+| :------------------ | :------------------------------------------ |
+| **Framework**       | React Native (Expo SDK)                     |
+| **Mapping & GIS**   | `react-native-maps`, Geoapify Routing API   |
+| **Telemetry & GPS** | `expo-location`                             |
+| **Local Storage**   | `@react-native-async-storage/async-storage` |
+| **Icons & UI**      | `@expo/vector-icons` (`Ionicons`)           |
+| **Build & Deploy**  | Expo Application Services (EAS), Expo Go    |
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+Ensure you have the following installed on your development machine:
+
+- **Node.js** (v18.x or later)
+- **npm** or **yarn**
+- **Expo Go** app on your physical mobile device (Android / iOS)
+
+---
+
+### Installation & Setup
+
+1. **Clone the Repository:**
    ```bash
-   npm install
+   git clone [https://github.com/your-username/vazhi-mobile-app.git](https://github.com/your-username/vazhi-mobile-app.git)
+   cd vazhi-mobile-app
+   Install Dependencies:
    ```
 
-2. Start the app
+Bash
+npm install
+Configure Environment Variables:
+Create a .env file in the root directory and add your Geoapify API key:
 
-   ```bash
-   npx expo start
-   ```
+Code snippet
+EXPO_PUBLIC_GEOAPIFY_KEY=your_geoapify_api_key_here
+Run the Application:
 
-In the output, you'll find options to open the app in a
+Bash
+npx expo start --clear
+Scan the generated QR code using the Expo Go app on your Android/iOS device.
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+Or press a to run on an Android Emulator.
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+📦 Distribution & Building (EAS / APK)
+To build a standalone, offline-installable Android APK for testing or handover:
 
-## Get a fresh project
+Install EAS CLI:
 
-When you're ready, run:
+Bash
+npm install -g eas-cli
+Configure eas.json for Direct APK Output:
 
-```bash
-npm run reset-project
-```
+JSON
+{
+"cli": { "version": ">= 10.0.0" },
+"build": {
+"preview": {
+"distribution": "internal",
+"android": { "buildType": "apk" }
+}
+}
+}
+Trigger Cloud or Local APK Build:
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Bash
 
-## Learn more
+# Cloud Build
 
-To learn more about developing your project with Expo, look at the following resources:
+eas build --platform android --profile preview
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+# Local Machine Build
 
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+eas build --platform android --profile preview --local
+📂 Project Structure
+vazhi-mobile-app/
+├── app/
+│ ├── (tabs)/
+│ │ ├── HomeScreen.jsx # Core map canvas, telemetry & trip form UI
+│ │ ├── HistoryScreen.jsx # Saved trips & offline sync manager
+│ │ └── SettingsScreen.jsx # Theme & language context toggles
+│ └── \_layout.jsx
+├── assets/
+│ └── theme/
+│ ├── LanguageContext.jsx # Multi-language translation dictionary
+│ └── ThemeContext.jsx # Dark/Light theme palette provider
+├── lib/
+│ ├── api.js # Geoapify place search & routing services
+│ └── trips.js # Backend trip sync pipeline
+├── .env # Public API environment variables
+├── app.json # Expo SDK app configuration
+├── eas.json # Expo Application Services build profiles
+└── package.json

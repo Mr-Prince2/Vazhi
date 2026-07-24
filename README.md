@@ -1,4 +1,4 @@
-# 🚗 Vazhi (വഴി) — Mobile Travel & Transit Data Collection App
+#  Vazhi (വഴി) — Mobile Travel & Transit Data Collection App
 
 > **Problem Statement ID:** 25082  
 > **Organization:** Government of Kerala | KSCSTE – National Transportation Planning and Research Centre (NATPAC)  
@@ -7,7 +7,7 @@
 
 ---
 
-## 📌 About the Project
+##  About the Project
 
 **Vazhi** is an intelligent, offline-first mobile application developed for **KSCSTE – NATPAC** to automate large-scale travel behavior data collection across Kerala.
 
@@ -23,29 +23,29 @@ Additionally, it collects qualitative trip data (purpose, companions, cost, freq
 
 ---
 
-## ✨ Key Features
+##  Key Features
 
-- **🗺️ Smart Map & 3D Live Navigation**  
+- ** Smart Map & 3D Live Navigation**  
   Tilted 3D driving perspective using `pitch` and `heading`, integrated with real-time compass tracking.
 
-- **📍 Origin & Destination Routing**  
+- ** Origin & Destination Routing**  
   Auto-detects current location, allows destination search, and renders routes using Geoapify API.
 
-- **⚡ Dynamic Live Rerouting**  
+- ** Dynamic Live Rerouting**  
   Detects route deviation (>60m) and recalculates optimal paths in real time.
 
-- **📊 Automated & Manual Data Logging**  
+- ** Automated & Manual Data Logging**  
   Predicts transport mode based on speed while allowing manual input for additional trip details.
 
-- **💾 Offline-First Architecture**  
+- ** Offline-First Architecture**  
   Uses `AsyncStorage` for local persistence with background sync when network is restored.
 
-- **🌐 Multi-Language & Theme Support**  
+- ** Multi-Language & Theme Support**  
   Supports English/Malayalam and light/dark themes.
 
 ---
 
-## 🛠️ Tech Stack
+##  Tech Stack
 
 | Component           | Technology / Library                        |
 | ------------------- | ------------------------------------------- |
@@ -58,7 +58,7 @@ Additionally, it collects qualitative trip data (purpose, companions, cost, freq
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### Prerequisites
 
@@ -104,7 +104,7 @@ npx expo start --clear
 
 ---
 
-## 📦 Distribution & Building (EAS / APK)
+##  Distribution & Building (EAS / APK)
 
 ### Install EAS CLI
 

@@ -8,6 +8,7 @@ import {
   Dimensions,
   FlatList,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -122,12 +123,21 @@ export default function HomeScreen() {
   const [satLabelVisible, setSatLabelVisible] = useState(true);
   const mapFadeAnim = useRef(new Animated.Value(1)).current;
   const satFadeAnim = useRef(new Animated.Value(1)).current;
+  
+  const [defaultMode, setDefaultMode] = useState("");
 
   const mapRef = useRef(null);
   const watcherRef = useRef(null);
   const latestSearch = useRef("");
 
   useEffect(() => {
+    (async () => {
+      try {
+        const mode = await AsyncStorage.getItem("vazhi:defaultMode");
+        if (mode && mode !== "Auto-detect") setDefaultMode(mode);
+      } catch (e) {}
+    })();
+
     triggerFade(mapFadeAnim, setMapLabelVisible);
     triggerFade(satFadeAnim, setSatLabelVisible);
 
@@ -392,7 +402,7 @@ export default function HomeScreen() {
             lat: destination?.latitude || 0,
             lon: destination?.longitude || 0,
           },
-          mode: "",
+          mode: defaultMode,
           purpose: "",
           companions: "0",
           cost: "",
@@ -423,7 +433,7 @@ export default function HomeScreen() {
         : null,
       to_location: "",
       to_coords: null,
-      mode: "",
+      mode: defaultMode,
       purpose: "",
       companions: "0",
       cost: "",
@@ -484,201 +494,7 @@ export default function HomeScreen() {
     );
   };
 
-  // ─── Render Form UI Layer Sheet ───────────────────────────────────────────
-  if (showForm) {
-    return (
-      <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
-          <ScrollView
-            contentContainerStyle={styles.formScrollContainer}
-            keyboardShouldPersistTaps="handled"
-          >
-            <View style={styles.formHeader}>
-              <View>
-                <Text style={[styles.formTitle, { color: theme.textPrimary }]}>
-                  {t.tripDetails || "Trip Details"}
-                </Text>
-                <Text style={[styles.formSub, { color: theme.textSecondary }]}>
-                  {finishedTrip
-                    ? `${finishedTrip.distance} km · ${Math.floor(finishedTrip.duration / 60)}m`
-                    : "Fill in your trip info"}
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setShowForm(false)}
-                style={[styles.iconBtn, { backgroundColor: theme.bgInput }]}
-              >
-                <Ionicons name="close" size={20} color={theme.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            <View
-              style={[styles.accentLine, { backgroundColor: theme.accent }]}
-            />
-
-            <View
-              style={[
-                styles.routeCard,
-                { backgroundColor: theme.bgCard, borderColor: theme.border },
-              ]}
-            >
-              <View style={{ flex: 1 }}>
-                <Text
-                  style={[styles.formLabel, { color: theme.textSecondary }]}
-                >
-                  {t.from || "From"}
-                </Text>
-                <TextInput
-                  style={[
-                    styles.textFormInput,
-                    {
-                      backgroundColor: theme.bgInput,
-                      color: theme.textPrimary,
-                      borderColor: theme.border,
-                    },
-                  ]}
-                  value={form.from_location}
-                  onChangeText={(text) =>
-                    setForm((f) => ({ ...f, from_location: text }))
-                  }
-                />
-                <Text
-                  style={[
-                    styles.formLabel,
-                    { color: theme.textSecondary, marginTop: 12 },
-                  ]}
-                >
-                  {t.to || "To"}
-                </Text>
-                <TextInput
-                  style={[
-                    styles.textFormInput,
-                    {
-                      backgroundColor: theme.bgInput,
-                      color: theme.textPrimary,
-                      borderColor: theme.border,
-                    },
-                  ]}
-                  value={form.to_location}
-                  onChangeText={(text) =>
-                    setForm((f) => ({ ...f, to_location: text }))
-                  }
-                />
-              </View>
-            </View>
-
-            <Text
-              style={[
-                styles.formLabel,
-                { color: theme.textSecondary, marginTop: 16 },
-              ]}
-            >
-              {t.transportMode || "Transport Mode"}
-            </Text>
-            <ChipRow
-              options={MODES}
-              selected={form.mode}
-              onSelect={(v) => setForm((f) => ({ ...f, mode: v }))}
-              theme={theme}
-            />
-
-            <Text
-              style={[
-                styles.formLabel,
-                { color: theme.textSecondary, marginTop: 16 },
-              ]}
-            >
-              {t.tripPurpose || "Trip Purpose"}
-            </Text>
-            <ChipRow
-              options={PURPOSES}
-              selected={form.purpose}
-              onSelect={(v) => setForm((f) => ({ ...f, purpose: v }))}
-              theme={theme}
-            />
-
-            <Text
-              style={[
-                styles.formLabel,
-                { color: theme.textSecondary, marginTop: 16 },
-              ]}
-            >
-              {t.frequencyQuestion || "Frequency"}
-            </Text>
-            <ChipRow
-              options={FREQS}
-              selected={form.frequency}
-              onSelect={(v) => setForm((f) => ({ ...f, frequency: v }))}
-              theme={theme}
-            />
-
-            <View style={styles.row}>
-              <View style={{ flex: 1, marginRight: 8 }}>
-                <Text
-                  style={[styles.formLabel, { color: theme.textSecondary }]}
-                >
-                  {t.companions || "Companions"}
-                </Text>
-                <TextInput
-                  style={[
-                    styles.textFormInput,
-                    {
-                      backgroundColor: theme.bgInput,
-                      color: theme.textPrimary,
-                      borderColor: theme.border,
-                    },
-                  ]}
-                  value={form.companions}
-                  onChangeText={(t) =>
-                    setForm((f) => ({ ...f, companions: t }))
-                  }
-                  keyboardType="numeric"
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text
-                  style={[styles.formLabel, { color: theme.textSecondary }]}
-                >
-                  {t.cost || "Cost (₹)"}
-                </Text>
-                <TextInput
-                  style={[
-                    styles.textFormInput,
-                    {
-                      backgroundColor: theme.bgInput,
-                      color: theme.textPrimary,
-                      borderColor: theme.border,
-                    },
-                  ]}
-                  value={form.cost}
-                  onChangeText={(t) => setForm((f) => ({ ...f, cost: t }))}
-                  keyboardType="numeric"
-                />
-              </View>
-            </View>
-
-            <TouchableOpacity
-              style={[styles.primaryBtn, { backgroundColor: theme.accent }]}
-              onPress={saveTrip}
-            >
-              <Ionicons
-                name="checkmark-circle-outline"
-                size={18}
-                color="#fff"
-                style={{ marginRight: 6 }}
-              />
-              <Text style={styles.primaryBtnText}>
-                {t.saveJourney || "Save Journey"}
-              </Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    );
-  }
+  // ─── Render Form UI Layer Sheet (Moved to Modal at bottom) ─────────────────
 
   // ─── Map Dashboard Layer View ─────────────────────────────────────────────
   return (
@@ -699,28 +515,23 @@ export default function HomeScreen() {
         {origin && (
           <Marker
             coordinate={origin}
-            title={t.origin || "Current Location"}
             anchor={{ x: 0.5, y: 0.5 }}
-            rotation={currentLocation?.heading || 0}
             flat={true}
           >
-            <View
-              style={[
-                styles.currentLocationRipple,
-                { borderColor: theme.accent },
-              ]}
-            >
-              <Ionicons
-                name="navigate"
-                size={14}
-                color={theme.accent}
-                style={{ transform: [{ rotate: "0deg" }] }}
+            <View style={styles.currentLocationRing}>
+              <View
+                style={[
+                  styles.currentLocationRipple,
+                  { backgroundColor: theme.accent || "#007AFF" },
+                ]}
               />
             </View>
           </Marker>
         )}
         {destination && (
-          <Marker coordinate={destination} title="Destination" pinColor="red" />
+          <Marker coordinate={destination} anchor={{ x: 0.5, y: 0.5 }}>
+            <View style={styles.destinationMarker} />
+          </Marker>
         )}
         {routeCoords.length > 1 && (
           <Polyline
@@ -950,6 +761,201 @@ export default function HomeScreen() {
           />
         )}
       </SafeAreaView>
+
+      {/* ─── Bottom Sheet Modal Overlay ─── */}
+      <Modal visible={showForm} animationType="slide" transparent={true} onRequestClose={() => setShowForm(false)}>
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView
+            style={[styles.bottomSheetContainer, { backgroundColor: theme.bg }]}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            <View style={styles.dragHandle} />
+            <ScrollView
+              contentContainerStyle={styles.formScrollContainer}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={styles.formHeader}>
+                <View>
+                  <Text style={[styles.formTitle, { color: theme.textPrimary }]}>
+                    {t.tripDetails || "Trip Details"}
+                  </Text>
+                  <Text style={[styles.formSub, { color: theme.textSecondary }]}>
+                    {finishedTrip
+                      ? `${finishedTrip.distance} km · ${Math.floor(finishedTrip.duration / 60)}m`
+                      : "Fill in your trip info"}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setShowForm(false)}
+                  style={[styles.iconBtn, { backgroundColor: theme.bgInput }]}
+                >
+                  <Ionicons name="close" size={20} color={theme.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
+              <View
+                style={[styles.accentLine, { backgroundColor: theme.accent }]}
+              />
+
+              <View
+                style={[
+                  styles.routeCard,
+                  { backgroundColor: theme.bgCard, borderColor: theme.border },
+                ]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={[styles.formLabel, { color: theme.textSecondary }]}
+                  >
+                    {t.from || "From"}
+                  </Text>
+                  <TextInput
+                    style={[
+                      styles.textFormInput,
+                      {
+                        backgroundColor: theme.bgInput,
+                        color: theme.textPrimary,
+                        borderColor: theme.border,
+                      },
+                    ]}
+                    value={form.from_location}
+                    onChangeText={(text) =>
+                      setForm((f) => ({ ...f, from_location: text }))
+                    }
+                  />
+                  <Text
+                    style={[
+                      styles.formLabel,
+                      { color: theme.textSecondary, marginTop: 12 },
+                    ]}
+                  >
+                    {t.to || "To"}
+                  </Text>
+                  <TextInput
+                    style={[
+                      styles.textFormInput,
+                      {
+                        backgroundColor: theme.bgInput,
+                        color: theme.textPrimary,
+                        borderColor: theme.border,
+                      },
+                    ]}
+                    value={form.to_location}
+                    onChangeText={(text) =>
+                      setForm((f) => ({ ...f, to_location: text }))
+                    }
+                  />
+                </View>
+              </View>
+
+              <Text
+                style={[
+                  styles.formLabel,
+                  { color: theme.textSecondary, marginTop: 16 },
+                ]}
+              >
+                {t.transportMode || "Transport Mode"}
+              </Text>
+              <ChipRow
+                options={MODES}
+                selected={form.mode}
+                onSelect={(v) => setForm((f) => ({ ...f, mode: v }))}
+                theme={theme}
+              />
+
+              <Text
+                style={[
+                  styles.formLabel,
+                  { color: theme.textSecondary, marginTop: 16 },
+                ]}
+              >
+                {t.tripPurpose || "Trip Purpose"}
+              </Text>
+              <ChipRow
+                options={PURPOSES}
+                selected={form.purpose}
+                onSelect={(v) => setForm((f) => ({ ...f, purpose: v }))}
+                theme={theme}
+              />
+
+              <Text
+                style={[
+                  styles.formLabel,
+                  { color: theme.textSecondary, marginTop: 16 },
+                ]}
+              >
+                {t.frequencyQuestion || "Frequency"}
+              </Text>
+              <ChipRow
+                options={FREQS}
+                selected={form.frequency}
+                onSelect={(v) => setForm((f) => ({ ...f, frequency: v }))}
+                theme={theme}
+              />
+
+              <View style={styles.row}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text
+                    style={[styles.formLabel, { color: theme.textSecondary }]}
+                  >
+                    {t.companions || "Companions"}
+                  </Text>
+                  <TextInput
+                    style={[
+                      styles.textFormInput,
+                      {
+                        backgroundColor: theme.bgInput,
+                        color: theme.textPrimary,
+                        borderColor: theme.border,
+                      },
+                    ]}
+                    value={form.companions}
+                    onChangeText={(t) =>
+                      setForm((f) => ({ ...f, companions: t }))
+                    }
+                    keyboardType="numeric"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={[styles.formLabel, { color: theme.textSecondary }]}
+                  >
+                    {t.cost || "Cost (₹)"}
+                  </Text>
+                  <TextInput
+                    style={[
+                      styles.textFormInput,
+                      {
+                        backgroundColor: theme.bgInput,
+                        color: theme.textPrimary,
+                        borderColor: theme.border,
+                      },
+                    ]}
+                    value={form.cost}
+                    onChangeText={(t) => setForm((f) => ({ ...f, cost: t }))}
+                    keyboardType="numeric"
+                  />
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.primaryBtn, { backgroundColor: theme.accent }]}
+                onPress={saveTrip}
+              >
+                <Ionicons
+                  name="checkmark-circle-outline"
+                  size={18}
+                  color="#fff"
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={styles.primaryBtnText}>
+                  {t.saveJourney || "Save Journey"}
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -967,13 +973,13 @@ const styles = StyleSheet.create({
   },
   searchCardWrapper: {
     borderRadius: 16,
-    borderWidth: 0.5,
+    borderWidth: 0,
     paddingHorizontal: 16,
-    elevation: 4,
+    elevation: 10,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
   },
   inputSearchFieldRow: {
     flexDirection: "row",
@@ -988,15 +994,15 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
   },
   predictionListAbs: {
-    borderRadius: 12,
-    borderWidth: 0.5,
+    borderRadius: 16,
+    borderWidth: 0,
     maxHeight: 200,
-    marginTop: 6,
-    elevation: 8,
+    marginTop: 8,
+    elevation: 10,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.12,
-    shadowRadius: 6,
+    shadowRadius: 16,
   },
   predictionItem: {
     flexDirection: "row",
@@ -1026,15 +1032,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 12,
-    height: 40,
-    minWidth: 40,
-    borderRadius: 20,
-    borderWidth: 0.5,
-    elevation: 3,
+    height: 44,
+    minWidth: 44,
+    borderRadius: 22,
+    borderWidth: 0,
+    elevation: 8,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
   },
   animatedLabel: { fontSize: 12, fontWeight: "600", marginLeft: 6 },
   trackingFabPositioner: {
@@ -1048,11 +1054,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    height: 52,
-    borderRadius: 26,
+    height: 56,
+    borderRadius: 28,
     paddingHorizontal: 24,
-    elevation: 6,
-    shadowRadius: 5,
+    elevation: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
     gap: 10,
   },
   primaryFabText: {
@@ -1063,10 +1072,35 @@ const styles = StyleSheet.create({
   },
 
   // Form Screen Styling Definitions
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.4)",
+  },
+  bottomSheetContainer: {
+    maxHeight: "90%",
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
+    elevation: 24,
+    overflow: "hidden",
+  },
+  dragHandle: {
+    width: 44,
+    height: 5,
+    backgroundColor: "#CBD5E1",
+    borderRadius: 3,
+    alignSelf: "center",
+    marginTop: 14,
+    marginBottom: 6,
+  },
   formScrollContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 40,
-    paddingBottom: 100,
+    paddingHorizontal: 24,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === "ios" ? 40 : 20,
   },
   formHeader: {
     flexDirection: "row",
@@ -1079,8 +1113,8 @@ const styles = StyleSheet.create({
   accentLine: { height: 2, width: 40, borderRadius: 1, marginBottom: 20 },
   routeCard: {
     flexDirection: "row",
-    borderRadius: 14,
-    borderWidth: 0.5,
+    borderRadius: 16,
+    borderWidth: 0,
     padding: 16,
     marginBottom: 8,
   },
@@ -1101,19 +1135,19 @@ const styles = StyleSheet.create({
   },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },
   chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 0.5,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 24,
+    borderWidth: 0,
   },
-  chipText: { fontSize: 13, fontWeight: "500" },
+  chipText: { fontSize: 13, fontWeight: "600" },
   row: { flexDirection: "row", marginTop: 10 },
   primaryBtn: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 15,
-    borderRadius: 14,
+    paddingVertical: 16,
+    borderRadius: 16,
     marginTop: 24,
     width: "100%",
   },
@@ -1126,18 +1160,41 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   currentLocationRipple: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    borderWidth: 2,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 3,
     borderColor: "#FFFFFF",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#185FA5",
+    backgroundColor: "#007AFF",
     elevation: 4,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
+  currentLocationRing: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(0, 122, 255, 0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(0, 122, 255, 0.3)",
+  },
+  destinationMarker: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#FF3B30",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 3,
+    borderColor: "#FFFFFF",
+    elevation: 6,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
   },
 });

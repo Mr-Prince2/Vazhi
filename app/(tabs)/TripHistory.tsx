@@ -17,7 +17,6 @@ import {
 import MapView, { Marker, Polyline } from "react-native-maps";
 import { useTranslation } from "../../assets/theme/LanguageContext";
 import { useTheme } from "../../assets/theme/ThemeContext";
-import { getCarbonEquivalency } from "../../lib/carbon";
 import { createTrip } from "../../lib/trips";
 
 interface TripData {
@@ -102,17 +101,6 @@ const formatDate = (iso: string): string => {
   });
 };
 
-const CO2_SAVED: Record<string, number> = {
-  Walk: 0.21,
-  Bike: 0.21,
-  Bus: 0.089,
-  Auto: 0.058,
-  Car: 0,
-  Train: 0.041,
-  Metro: 0.041,
-};
-const calcCO2 = (mode: string, km: string): string =>
-  ((CO2_SAVED[mode] ?? 0) * parseFloat(km || "0")).toFixed(2);
 
 interface CardProps {
   trip: TripData;
@@ -120,15 +108,16 @@ interface CardProps {
   onDelete: (id: string) => void;
   t: any;
   index: number;
+  unitPref: string;
+  diaryEnabled: boolean;
 }
 
-function TripCard({ trip, theme, onDelete, t, index }: CardProps) {
+function TripCard({ trip, theme, onDelete, t, index, unitPref, diaryEnabled }: CardProps) {
   const meta = MODE_META[trip.mode] ?? {
     icon: "navigate-outline",
     color: theme.accent,
     bg: theme.accentSoft,
   };
-  const co2 = calcCO2(trip.mode, trip.distance);
   const [expanded, setExpanded] = useState(false);
   const expandAnim = useRef(new Animated.Value(0)).current;
 
@@ -185,7 +174,7 @@ function TripCard({ trip, theme, onDelete, t, index }: CardProps) {
         {/* Right: distance + time + badge */}
         <View style={styles.cardRight}>
           <Text style={[styles.cardDist, { color: theme.textPrimary }]}>
-            {trip.distance ?? "—"} km
+            {(parseFloat(trip.distance || "0") * (unitPref === "Imperial (mi)" ? 0.621371 : 1)).toFixed(1)} {unitPref === "Imperial (mi)" ? "mi" : "km"}
           </Text>
           <Text style={[styles.cardTime, { color: theme.textMuted }]}>
             {formatDate(trip.startedAt)}
@@ -255,12 +244,6 @@ function TripCard({ trip, theme, onDelete, t, index }: CardProps) {
                 val: trip.frequency || "—",
                 color: theme.textSecondary,
               },
-              {
-                icon: "leaf-outline",
-                label: "CO₂ Saved",
-                val: `${co2} kg`,
-                color: "#16A34A",
-              },
             ].map(({ icon, label, val, color }) => (
               <View
                 key={label}
@@ -286,7 +269,7 @@ function TripCard({ trip, theme, onDelete, t, index }: CardProps) {
             ))}
           </View>
 
-          {trip.coords && trip.coords.length > 0 && (
+          {diaryEnabled && trip.coords && trip.coords.length > 0 && (
             <View style={styles.historyMapContainer}>
               <Text
                 style={[styles.diaryMapLabel, { color: theme.textSecondary }]}
@@ -310,11 +293,20 @@ function TripCard({ trip, theme, onDelete, t, index }: CardProps) {
                     longitudeDelta: 0.02,
                   }}
                 >
-                  <Marker coordinate={trip.coords[0]} pinColor="#16A34A" />
+                  <Marker coordinate={trip.coords[0]} anchor={{ x: 0.5, y: 0.5 }}>
+                    <View style={styles.historyMarkerStart} />
+                  </Marker>
                   <Marker
                     coordinate={trip.coords[trip.coords.length - 1]}
-                    pinColor={theme.accent}
-                  />
+                    anchor={{ x: 0.5, y: 0.5 }}
+                  >
+                    <View
+                      style={[
+                        styles.historyMarkerEnd,
+                        { backgroundColor: theme.accent || "#007AFF" },
+                      ]}
+                    />
+                  </Marker>
                   <Polyline
                     coordinates={trip.coords}
                     strokeWidth={3}
@@ -359,6 +351,9 @@ export default function TripHistoryScreen() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [activeFilter, setActiveFilter] = useState<string>("All");
+
+  const [unitPref, setUnitPref] = useState("Metric (km)");
+  const [diaryEnabled, setDiaryEnabled] = useState(true);
 
   const FILTER_OPTIONS = [
     "All",
@@ -419,6 +414,11 @@ export default function TripHistoryScreen() {
   const loadTrips = async () => {
     setLoading(true);
     try {
+      const u = await AsyncStorage.getItem("vazhi:unit");
+      if (u) setUnitPref(u);
+      const d = await AsyncStorage.getItem("vazhi:diaryEnabled");
+      setDiaryEnabled(d === null || d === "true");
+
       const raw = await AsyncStorage.getItem("vazhi:trips");
       const parsedTrips: TripData[] = raw ? JSON.parse(raw) : [];
       setTrips(parsedTrips);
@@ -447,12 +447,12 @@ export default function TripHistoryScreen() {
       ? trips
       : trips.filter((t) => t.mode === activeFilter);
 
-  const totalKm = trips
-    .reduce((acc, t) => acc + parseFloat(t.distance || "0"), 0)
+  const distMultiplier = unitPref === "Imperial (mi)" ? 0.621371 : 1;
+  const distUnit = unitPref === "Imperial (mi)" ? "mi" : "km";
+
+  const totalKm = (trips
+    .reduce((acc, t) => acc + parseFloat(t.distance || "0"), 0) * distMultiplier)
     .toFixed(1);
-  const totalCO2 = trips
-    .reduce((acc, t) => acc + parseFloat(calcCO2(t.mode, t.distance)), 0)
-    .toFixed(2);
   const totalCost = trips.reduce(
     (acc, t) => acc + parseFloat(t.cost || "0"),
     0,
@@ -469,26 +469,26 @@ export default function TripHistoryScreen() {
       <SafeAreaView style={[styles.container, { backgroundColor: theme.bg }]}>
         <View style={styles.header}>
           <Text style={[styles.screenTitle, { color: theme.textPrimary }]}>
-            {t.journeyLog}
+            {t.journeyLog || "Journey Log"}
           </Text>
           <Text style={[styles.screenSub, { color: theme.textSecondary }]}>
-            {t.travelHistory}
+            {t.travelHistory || "Your travel history"}
           </Text>
         </View>
         <View style={styles.emptyState}>
           <View
             style={[
               styles.emptyCircle,
-              { backgroundColor: theme.accentSoft, borderColor: theme.border },
+              { backgroundColor: theme.bgCard, borderColor: theme.border },
             ]}
           >
-            <Ionicons name="map-outline" size={44} color={theme.accent} />
+            <Ionicons name="compass-outline" size={56} color={theme.accent} />
           </View>
           <Text style={[styles.emptyTitle, { color: theme.textPrimary }]}>
-            {t.noJourneysYet}
+            {t.noJourneysYet || "No Journeys Yet"}
           </Text>
           <Text style={[styles.emptySub, { color: theme.textSecondary }]}>
-            {t.startFirstTrip}
+            {t.startFirstTrip || "Your recorded trips will appear here once you start traveling."}
           </Text>
         </View>
       </SafeAreaView>
@@ -556,18 +556,10 @@ export default function TripHistoryScreen() {
             {
               label: t.distance,
               val: `${totalKm}`,
-              unit: "km",
+              unit: distUnit,
               icon: "speedometer-outline",
               color: "#533AB7",
               bg: "#EDE9FE",
-            },
-            {
-              label: "CO₂ Saved",
-              val: `${totalCO2}`,
-              unit: "kg",
-              icon: "leaf-outline",
-              color: "#16A34A",
-              bg: "#DCFCE7",
             },
             {
               label: "Spent",
@@ -606,70 +598,6 @@ export default function TripHistoryScreen() {
             </View>
           ))}
         </ScrollView>
-
-        {/* Eco Widget */}
-        {trips.length > 0 && (
-          <View
-            style={[
-              styles.ecoWidget,
-              {
-                backgroundColor: theme.bgCard,
-                borderColor: "#DCFCE7",
-                marginHorizontal: 16,
-              },
-            ]}
-          >
-            <View style={styles.ecoWidgetHeader}>
-              <View style={[styles.ecoIconBg, { backgroundColor: "#DCFCE7" }]}>
-                <Ionicons name="leaf" size={16} color="#16A34A" />
-              </View>
-              <Text
-                style={[styles.ecoWidgetTitle, { color: theme.textPrimary }]}
-              >
-                {t.ecoWidgetTitle}
-              </Text>
-            </View>
-            <Text style={[styles.ecoWidgetSub, { color: theme.textSecondary }]}>
-              {t.ecoWidgetSub}
-            </Text>
-            <View style={styles.ecoAnalogyGrid}>
-              {[
-                {
-                  emoji: "🌳",
-                  val: `${getCarbonEquivalency(parseFloat(totalCO2)).treesSaved}`,
-                  unit: t.trees,
-                  sub: t.yearlyAbs,
-                },
-                {
-                  emoji: "🔋",
-                  val: getCarbonEquivalency(
-                    parseFloat(totalCO2),
-                  ).smartphoneCharges.toLocaleString(),
-                  unit: "",
-                  sub: t.phoneCharges,
-                },
-              ].map(({ emoji, val, unit, sub }) => (
-                <View
-                  key={sub}
-                  style={[
-                    styles.ecoCard,
-                    { backgroundColor: "#F0FDF4", borderColor: "#BBF7D0" },
-                  ]}
-                >
-                  <Text style={styles.ecoEmoji}>{emoji}</Text>
-                  <View>
-                    <Text style={[styles.ecoVal, { color: "#16A34A" }]}>
-                      {val} {unit}
-                    </Text>
-                    <Text style={[styles.ecoLabel, { color: "#4ADE80" }]}>
-                      {sub}
-                    </Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-          </View>
-        )}
 
         {/* Mode Breakdown */}
         {Object.keys(modeCounts).length > 0 && (
@@ -818,6 +746,8 @@ export default function TripHistoryScreen() {
               onDelete={deleteTrip}
               t={t}
               index={index}
+              unitPref={unitPref}
+              diaryEnabled={diaryEnabled}
             />
           ))}
           {filteredTrips.length === 0 && (
@@ -868,12 +798,17 @@ const styles = StyleSheet.create({
 
   statsScrollRow: { paddingHorizontal: 16, paddingBottom: 12, gap: 10 },
   statCard: {
-    borderRadius: 14,
-    borderWidth: 0.5,
-    padding: 14,
+    borderRadius: 16,
+    borderWidth: 0,
+    padding: 16,
     alignItems: "center",
-    minWidth: 90,
-    gap: 6,
+    minWidth: 100,
+    gap: 8,
+    elevation: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
   },
   statIconBg: {
     width: 32,
@@ -886,11 +821,16 @@ const styles = StyleSheet.create({
   statLabel: { fontSize: 10, fontWeight: "600", textAlign: "center" },
 
   ecoWidget: {
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 20,
+    borderWidth: 0,
+    padding: 20,
+    marginBottom: 16,
     marginTop: 4,
+    elevation: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 14,
   },
   ecoWidgetHeader: {
     flexDirection: "row",
@@ -913,19 +853,25 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: 12,
+    borderRadius: 14,
+    borderWidth: 0,
+    padding: 14,
+    backgroundColor: "rgba(255,255,255,0.4)",
   },
   ecoEmoji: { fontSize: 22 },
   ecoVal: { fontSize: 14, fontWeight: "700" },
   ecoLabel: { fontSize: 10, marginTop: 1 },
 
   modeBreakdown: {
-    borderRadius: 14,
-    borderWidth: 0.5,
-    padding: 14,
-    marginBottom: 4,
+    borderRadius: 16,
+    borderWidth: 0,
+    padding: 16,
+    marginBottom: 8,
+    elevation: 6,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
   },
   modeBars: { marginTop: 12, gap: 10 },
   modeBarRow: { flexDirection: "row", alignItems: "center", gap: 8 },
@@ -958,9 +904,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 5,
     paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingVertical: 8,
     borderRadius: 20,
-    borderWidth: 0.5,
+    borderWidth: 0,
   },
   filterPillText: { fontSize: 12, fontWeight: "600" },
   filterPillCount: { fontSize: 10, marginLeft: 1 },
@@ -980,10 +926,15 @@ const styles = StyleSheet.create({
   tripsCount: { fontSize: 11 },
 
   card: {
-    borderRadius: 16,
-    borderWidth: 0.5,
-    marginBottom: 10,
+    borderRadius: 20,
+    borderWidth: 0,
+    marginBottom: 12,
     overflow: "hidden",
+    elevation: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
   },
   cardTop: { flexDirection: "row", alignItems: "center", padding: 14, gap: 12 },
   modeCircle: {
@@ -1028,9 +979,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    padding: 10,
-    borderRadius: 10,
-    borderWidth: 0.5,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 0,
   },
   detailLabel: { fontSize: 10, fontWeight: "600", letterSpacing: 0.2 },
   detailVal: { fontSize: 12, fontWeight: "700", marginTop: 1 },
@@ -1044,12 +995,38 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   mapWrapperHidden: {
-    height: 130,
-    borderRadius: 12,
+    height: 140,
+    borderRadius: 16,
     overflow: "hidden",
-    borderWidth: 0.5,
+    borderWidth: 0,
   },
   historyMiniMap: { flex: 1 },
+  historyMarkerStart: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#34C759",
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 2,
+    elevation: 4,
+  },
+  historyMarkerEnd: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#007AFF",
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 2,
+    elevation: 4,
+  },
 
   deleteBtn: {
     flexDirection: "row",
@@ -1071,13 +1048,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
   },
   emptyCircle: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    borderWidth: 1,
+    width: 140,
+    height: 140,
+    borderRadius: 40,
+    borderWidth: 0,
     alignItems: "center",
+    elevation: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
     justifyContent: "center",
-    marginBottom: 20,
+    marginBottom: 24,
   },
   emptyTitle: { fontSize: 20, fontWeight: "700", marginBottom: 10 },
   emptySub: { fontSize: 14, textAlign: "center", lineHeight: 22 },
